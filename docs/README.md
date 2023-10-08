@@ -1,9 +1,17 @@
 # A C++ chat client-server application
-A simple chat application written in C/C++, which purpose was to give me fundamental knowledge about UNIX socket programming as well as application design knowledge. Many of its concepts are derived from the [IRC Protocol](https://www.rfc-editor.org/rfc/rfc1459.html#page-13 "IRC Protocol Description"). 
+A simple TCP/IPv4 chat application written in C/C++, which purpose was to give me fundamental knowledge about UNIX socket programming as well as application design knowledge. Many of its concepts are derived from the [IRC Protocol](https://www.rfc-editor.org/rfc/rfc1459.html#page-13 "IRC Protocol Description"). 
 In the next sections will be the outline of the project defining communication protocols, commands, and other abilities and limitations of the chat application. 
+
+## ⚙️ Requirements
+
+1. C++ 17 or higher
+2. CMake 3.11 or higher
+3. Linux-based OS
+4. A firewall settings configured for allowing incoming connections (optional)
 
 ## 🔨 Installation
 
+Currently, the project only supports Linux-Based OSes. In the future, I plan to add compatability with Windows.
 To install the project, run these commands:
 ```
 git clone https://github.com/AdrianGuretto/cpp_chat_app.git
@@ -41,7 +49,8 @@ NICK_STAKEN     :   Tell a client that the nickname is not valid (taken by someo
 NICK_INVALD     :   Tell a client that the nickname is not valid (contains special characters or spaces)
 ```
 
-*Client's Key Signals*
+*Client's Key Signals*  
+If a command contains arguments, then each argument is separated by ASCII character start-of-text (002)
 ```
 NICK_NEWREQ                     :     Send the initial nickname (CONN_ESTABLISHING time only)
 ACT_NICKCNG<new_name>           :     Tell the server to change the nickname to a nickname
@@ -80,23 +89,28 @@ ___
 **CLIENT:**  
 Client runs displaying and accepting-input functions on two separate, non-blocking threads:  
 #### Receiving
-1) A user repeatedly tries to read from the server socket.
-2) If received bytes are one and more, then it we have received data.
-3) A message packet is disassembled by repeatedly reading chunks of data from the server socket:
+```
+1. A user repeatedly tries to read from the server socket.
+2. If received bytes are one and more, then it means we have received data.
+3. A message packet is disassembled by repeatedly reading chunks of data from the server socket:
     1. Read first 4 bytes of the packet (4 bytes = 4 digits in 1024; ) to get the length of the message.
     2. Read the number of bytes from the received message length number.
     3. Check if the message is a Key Signal: if yes, then we pass it to Key Signal handling function; if not, then we display the message on the screen  
+```
 #### Sending
+```
 1. A user enters a message to the input reader and the reader checks if the message is less than 1024 bytes (MESSAGE_LENGTH_LIMIT)
 2. If the message is more than 1024 bytes, then _**MSG_LEN_LIMIT_EXCEEDED**_ error flag.
 3. The message is processed by message-assembling functions
-    1. If the message starts with **/**, then it is a command and the command is transformed to Key Signal message (with '\07' at the beginning)
-    2. Else it is a regular message.
-    3. Add the length of the processed message at the end -> the message is assembled
-4. The assembled message is sent to the server socket.  
-**CLIENT:**  
+    a) If the message starts with **/**, then it is a command and the command is transformed to Key Signal message (with '\07' at the beginning)
+    b) Else it is a regular message.
+4. Add the length of the processed message at the end -> the message is assembled
+5. The assembled message is sent to the server socket.
+```
+**SERVER:**  
 Server iterates over the active `pollfd` objects using [poll()](https://man7.org/linux/man-pages/man2/poll.2.html) system call and checks if a socket is ready to be read from. We only need to check for readable sockets, because, if there is something to read, then we only have to call broadcasting function that will perform its own iteration over the list of sockets and will check for writeable ones.
 #### Receiving
+```
 1. A server runs through the list of active clients (poll() objects) to see available for reading sockets
 2. If a socket is availbale for reading, check if:
     1. The available socket is the server socket, then it is a new connection -> accept new connection -> Establish Connection
@@ -105,15 +119,16 @@ Server iterates over the active `pollfd` objects using [poll()](https://man7.org
     1. Receive the first 4 bytes of the packet to get the message length;
     2. Read the received message length.
     3. Check if the message is a Key Signal: 
-        1. if it starts with '\07' character, then handle the Signal;
-        2. If it is a regular message, broadcast it to every active connection.
-    
-
+        a) if it starts with '\07' character, then handle the Signal;
+        b) If it is a regular message, broadcast it to every active connection.
+```
 #### Sending
+```
 1. A message is assembled based on its type:
     1. Key Signal Message: assembled_string.length() + assembled_string('\07' + KEY_SIGNAL)
     2. Regular Message: assembled_string.length() + assembled_string(MESSAGE)
 2. Send the message to the client. On error: Disconnect the client from the server.
+```
 
 
 ## 🆕 Future Updates
@@ -121,3 +136,4 @@ Server iterates over the active `pollfd` objects using [poll()](https://man7.org
 2. Add GUI interface (QT-based)
 3. Add support for channels.
 4. Add support for creating permanent user accounts.
+5. Add support for IPv6 addresses.
