@@ -21,6 +21,11 @@
 #define MESSAGE_MAX_LENGTH 1024;
 #define CONNECTIONS_LIMIT 30;
 
+int EXIT_SIGNAL = 0;
+static void InterruptHandler(int signal_num){
+    EXIT_SIGNAL = 1;
+}
+
 // TO DO: Finish the algorithm for accepting new connections
 // TO DO: Switch from exceptions to return values.
 

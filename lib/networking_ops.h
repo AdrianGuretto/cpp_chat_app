@@ -1,3 +1,4 @@
+#pragma once
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -10,6 +11,7 @@
 #include <errno.h>
 #include <stdexcept>
 #include <string.h>
+#include <iostream>
 
 #include <string>
 
@@ -57,6 +59,8 @@ static void SetSocketOption(int socketfd, int socket_option){
 */
 static ConnectionInfo GetConnectionInfo(sockaddr_storage* conn_address){
     char address[INET6_ADDRSTRLEN];
+    memset(&address, 0, sizeof(address));
+
     int port;
 
     if (conn_address->ss_family == AF_INET) { // IPv4
@@ -72,6 +76,12 @@ static ConnectionInfo GetConnectionInfo(sockaddr_storage* conn_address){
     
     return conn_info;
 }
+static ConnectionInfo GetConnectionInfoFromSocket(int socketfd){
+    sockaddr_storage addr_inf;
+    socklen_t addr_inf_len = sizeof(addr_inf);
+    getpeername(socketfd, reinterpret_cast<sockaddr*>(&addr_inf), &addr_inf_len);
+    return GetConnectionInfo(&addr_inf);
+}
 
 
 // Pack a message into a communication packet: <msg_len><msg>
@@ -80,7 +90,7 @@ static std::string AssembleMessagePacket(std::string&& original_message){
     std::string assembled_msg(std::to_string(orig_msg_len));
     assembled_msg.reserve(4 + orig_msg_len); 
     while (assembled_msg.size() < 4){ // 4 bytes = 4 digits in MESSAGE_MAX_LEN
-        assembled_msg += '0' + assembled_msg;
+        assembled_msg = '0' + assembled_msg;
     }
     assembled_msg.append(std::move(original_message));
     return assembled_msg;
@@ -90,7 +100,7 @@ static std::string AssembleMessagePacket(const std::string& original_message){
     std::string assembled_msg(std::to_string(orig_msg_len));
     assembled_msg.reserve(4 + orig_msg_len); 
     while (assembled_msg.size() < 4){ // 4 bytes = 4 digits in MESSAGE_MAX_LEN
-        assembled_msg += '0' + assembled_msg;
+        assembled_msg = '0' + assembled_msg;
     }
     assembled_msg.append(original_message);
     return assembled_msg;
@@ -125,14 +135,18 @@ static int __SendAllBytes__(int receiver_socketfd, const char* msg_buffer, size_
  * @return 0 on success, -1 on error with errno set. 
 */
 static int SendMessage(int receiver_socketfd, std::string&& message){
+    std::cerr << "Sending1: " << message << '\n';
     std::string final_msg(AssembleMessagePacket(std::move(message)));
+    std::cerr << "Sending: " << final_msg << '\n';
     if (__SendAllBytes__(receiver_socketfd, final_msg.data(), final_msg.size()) == -1){
         return -1;
     }
     return 0;
 }
 static int SendMessage(int receiver_socketfd, const std::string& message){
+    std::cerr << "Sending1: " << message << '\n';
     std::string final_msg(AssembleMessagePacket(message));
+    std::cerr << "Sending: " << final_msg << '\n';
     if (__SendAllBytes__(receiver_socketfd, final_msg.data(), final_msg.size()) == -1){
         return -1;
     }
@@ -140,13 +154,15 @@ static int SendMessage(int receiver_socketfd, const std::string& message){
 }
 
 /**
- * Receive a message packet coming in the format: <msg_length><msg>
+ * Receive a message packet coming in the format: <msg_length><msg> and write <msg> to message_buffer.
  * @param sender_socketfd socket of a message sender
  * @param message_buffer a buffer to where the received message will to be written
  * @return length of the received message on success, 0 if sender_socketfd has closed the connection, -1 on error with errno set
 */
 static int ReceiveMessage(int sender_socketfd, char* message_buffer){
     char msg_len_str[4];
+    memset(&msg_len_str, 0, sizeof(msg_len_str));
+
     int recv_bytes = recv(sender_socketfd, msg_len_str, 4, 0); // recv_msg_length
     if (recv_bytes == -1){
         return -1;
@@ -156,6 +172,8 @@ static int ReceiveMessage(int sender_socketfd, char* message_buffer){
     }
 
     int msg_len = std::atoi(msg_len_str);
+
+    memset(message_buffer, 0, sizeof(*message_buffer));
     recv_bytes = recv(sender_socketfd, message_buffer, msg_len, 0);
     if (recv_bytes == -1){
         return -1;
@@ -163,5 +181,6 @@ static int ReceiveMessage(int sender_socketfd, char* message_buffer){
     else if (recv_bytes == 0){
         return 0;
     }
+    std::cerr << "Received: "s << message_buffer << std::endl;
     return recv_bytes;
 }

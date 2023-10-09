@@ -11,5 +11,7 @@ set(CLIENT_SRCS_DIR "src/client")
 set(CLIENT_FILES "${CLIENT_SRCS_DIR}/client.cpp" "${CLIENT_SRCS_DIR}/client.h" "${CLIENT_SRCS_DIR}/domain.h" ${DEPEND_LIBRARIES})
 set(SERVER_FILES "${SERVER_SRCS_DIR}/server.cpp" "${SERVER_SRCS_DIR}/server.h" "${SERVER_SRCS_DIR}/domain.h" ${DEPEND_LIBRARIES})
 
+add_compile_options(-std=c++17)
+
 add_executable(client ${CLIENT_FILES})
 add_executable(server ${SERVER_FILES})
