@@ -173,7 +173,7 @@ static int ReceiveMessage(int sender_socketfd, char* message_buffer){
 
     int msg_len = std::atoi(msg_len_str);
 
-    memset(message_buffer, 0, sizeof(*message_buffer));
+    // memset(message_buffer, 0, sizeof(*message_buffer));
     recv_bytes = recv(sender_socketfd, message_buffer, msg_len, 0);
     if (recv_bytes == -1){
         return -1;

@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <list>
 #include <algorithm>
+#include <signal.h>
 
 #include "domain.h"
 

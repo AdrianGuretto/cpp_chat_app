@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 
+#include <signal.h>
 #include "pthread.h"
 
 int EXIT_FLAG = 0;
@@ -211,6 +212,7 @@ int Client::EstablishConnection(){
         std::cerr << MakeColorfulText("[Error] EstablishConnection: ReceiveMessage() fail: "s + std::string(strerror(errno)), Color::Red);
         return -1;
     }
+    std::cerr << "Writeable buffer: \"" << writable_buffer << "\"\n";
     std::string key_signal_name(writable_buffer + 1); // +1 to skip the key signal character (\07)
     if (key_signal_name != "NICK_PROMPT"){
         std::cerr << MakeColorfulText("[Error] EstablishConnection(): Received a wrong initial signal: "s + key_signal_name, Color::Red) << '\n';
@@ -232,9 +234,16 @@ int Client::EstablishConnection(){
         SendMessage(client_socket_, "\07NICK_NEWREQ"s + std::move(nick_str));
         
         std::string serv_response;
-        serv_response.reserve(250);
-        ReceiveMessage(client_socket_, serv_response.data());
-        std::cerr << "Received response from the server"s << '\n';
+        serv_response.resize(12);
+        int recv_bytes;
+        if ((recv_bytes = ReceiveMessage(client_socket_, serv_response.data())) == 0){
+            std::cerr << MakeColorfulText("[ConnectionClosed] Server closed the connection."s, Color::Pink) << std::endl;
+            return -1;
+        } else if (recv_bytes == -1){
+            std::cerr << MakeColorfulText("[Error] Failed to receive a message from server: recv(): "s + std::string(strerror(errno)), Color::Red) << std::endl;
+            return -1;
+        }
+        std::cerr << "Received response from the server ("s << serv_response.size() << "): \""s << serv_response << "\"\n";
 
         std::string server_command(serv_response.substr(1)); // omit the first key signal char
         if (server_command == "NICK_ACCEPT"s){
@@ -248,7 +257,7 @@ int Client::EstablishConnection(){
             std::cerr << MakeColorfulText("[NickRefused] Entered nickname contains forbidden characters. Enter a new one.", Color::Red);
         }
         else{ // Unknown key signal
-            std::cerr << MakeColorfulText("[Error] EstablishConnection(): Received an unknown key signal: "s + std::string(serv_response), Color::Red) << '\n';
+            std::cerr << MakeColorfulText("[Error] EstablishConnection(): Received an unknown key signal: \""s + std::string(serv_response), Color::Red) << "\"\n";
             return -1; 
         }
     }

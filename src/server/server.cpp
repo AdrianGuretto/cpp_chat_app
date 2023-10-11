@@ -35,10 +35,13 @@ Server::Server(char* hostname, char* port) : hostname_(hostname), port_(port) {
 }
 
 int Server::ProcessMessage(int sender_socketfd, char* readable_buffer, std::vector<DisconnectedClient>& disconnected_storage){
+    std::cerr << "ProcessMessage() call" << std::endl;
+
     std::string msg_str(readable_buffer);
     if (msg_str.size() == 0){ // TO DO: Make sure that no message is empty
         return 0;
     }
+    ConnectionInfo conn_inf = GetConnectionInfoFromSocket(sender_socketfd);
     if (msg_str[0] == '\07'){
         std::string command_str(msg_str.substr(1));
         const auto send_msg_with_errorchecking = [&](std::string&& message){
@@ -62,6 +65,18 @@ int Server::ProcessMessage(int sender_socketfd, char* readable_buffer, std::vect
                 std::string nickname(command_str.substr(11));
                 NicknameAction nick_action = __ValidateNickname__(nickname.data());
                 if (nick_action == NicknameAction::NICK_ACCEPT){
+                    send_msg_with_errorchecking("\07NICK_ACCEPT"s);
+                    
+                    User new_user{.nickname = nickname, .ip_address = conn_inf.ip_address, .port = std::to_string(conn_inf.port)};
+
+                    pollfd new_user_pollobj;
+                    new_user_pollobj.events = POLLIN | POLLOUT;
+                    new_user_pollobj.fd = sender_socketfd;
+                    
+                    poll_objects_.push_back(std::move(new_user_pollobj));
+                    sock_to_user_[sender_socketfd] = std::move(new_user);
+                    taken_nicknames_.insert(nickname);
+                    BroadcastMessage(MakeColorfulText("[Connection] "s + nickname + " "s + conn_inf.ToString() + " has connected."s, Color::Green));
                     return send_msg_with_errorchecking(std::string("Welcome to the server! Currently active users: "s + std::to_string(sock_to_user_.size())));
                 } else{
                     return send_msg_with_errorchecking(std::string(nickaction_to_keysig_string.at(nick_action)));
@@ -85,7 +100,6 @@ int Server::ProcessMessage(int sender_socketfd, char* readable_buffer, std::vect
             BroadcastMessage(std::move(final_msg));
         }
         else{ // it is a message from an unconnected client -> protocol violation (possible DDOS)
-            ConnectionInfo conn_inf = GetConnectionInfoFromSocket(sender_socketfd);
             std::cerr << MakeColorfulText("client ("s + conn_inf.ip_address + ":"s + std::to_string(conn_inf.port) + ") failed to connect: message protocol violation. (msg: "s + std::string(readable_buffer) + ")."s, Color::Pink) << '\n';
             close(sender_socketfd); 
         }
@@ -114,6 +128,7 @@ void Server::EstablishConnection(std::vector<pollfd>& pending_connections_vec, s
 }
 
 void Server::HandlePendingConnections(std::vector<pollfd>& pending_connections_vec, char* read_buffer){
+    std::cerr << "HandlePendingConnections call" << std::endl;
     int poll_count = poll(pending_connections_vec.data(), pending_connections_vec.size(), 200); // 200 miliseconds wait.
     if (poll_count == 0){
         return;
@@ -125,18 +140,32 @@ void Server::HandlePendingConnections(std::vector<pollfd>& pending_connections_v
     static std::vector<DisconnectedClient> failed_clients;
     failed_clients.reserve(sock_to_user_.size());
 
+    static std::vector<pollfd> new_connected_clients;
+    new_connected_clients.reserve(sock_to_user_.size());
     for (size_t i = 0; i < pending_connections_vec.size(); ++i){
-        const pollfd& poll_obj = pending_connections_vec[i];
+        pollfd& poll_obj = pending_connections_vec[i];
         if (poll_obj.revents & POLLIN){ // a client is sending us something
             if (ReceiveMessage(poll_obj.fd, read_buffer) == 0){
                 failed_clients.push_back(DisconnectedClient{.socket_fd = poll_obj.fd, .disconnect_reason = "client disconnect."s});
             }
-            ProcessMessage(poll_obj.fd, read_buffer, failed_clients);
+            if (ProcessMessage(poll_obj.fd, read_buffer, failed_clients) == 0){ // if connection has been successful
+                new_connected_clients.push_back(poll_obj);
+            } else{
+                failed_clients.push_back(DisconnectedClient{.socket_fd = poll_obj.fd, .disconnect_reason = "client failed to connect: "s + std::string(strerror(errno))});
+            }
         }
+    }
+
+    // Removing successfully connected clients from pending connections list
+    for (pollfd& poll_obj : new_connected_clients){
+        pending_connections_vec.erase(std::find_if(pending_connections_vec.begin(), pending_connections_vec.end(), [&poll_obj](const pollfd& poll_obj2){
+            return poll_obj.fd == poll_obj2.fd;
+        }));
     }
 
     DisconnectClient(failed_clients);
     failed_clients.clear();
+    new_connected_clients.clear();
 }
 
 int Server::AcceptNewConnection(sockaddr_storage* addr_storage, socklen_t* addr_len_ptr){
@@ -158,7 +187,7 @@ void Server::Start(){
 
     char read_buffer[1028]; // +4 bytes for message header (msg_len)
     memset(&read_buffer, 0, sizeof(read_buffer));
-
+    std::cerr << "Server socketfd: "s << server_socket_ << std::endl;
     sockaddr_storage new_connection_addr;
     socklen_t new_conn_addrlen;
 
@@ -278,6 +307,7 @@ void Server::DisconnectClient(DisconnectedClient&& disconn_info) noexcept{
     }
 }
 void Server::DisconnectClient(const DisconnectedClient& disconn_info) noexcept{
+    std::cerr << "DisconnectClient() socketfd: "s << disconn_info.socket_fd << std::endl;
     if (sock_to_user_.count(disconn_info.socket_fd)){ // if the client is connected.
         User disc_client = sock_to_user_.at(disconn_info.socket_fd);
 
