@@ -5,10 +5,13 @@
 #include <iostream>
 #include <memory>
 
-#include <signal.h>
-#include "pthread.h"
+#include <curses.h>
 
-int EXIT_FLAG = 0;
+#include <signal.h>
+#include <thread>
+#include <atomic>
+
+std::atomic_int EXIT_FLAG = 0;
 void InterruptHandler(int signal_num){
     EXIT_FLAG = 1;
 }
@@ -35,7 +38,12 @@ public: // ---------- MAIN API ----------
     void Disconnect() noexcept;
 
 private: // ---------- HELPER METHODS ----------
-    int ProcessInputCommand(std::string&& command_str, char* write_buffer);
+    /**
+     * Parse and process user input and send it to the server.
+     * @param command_str a command string from the user.
+     * @return 0 on success, -1 on error with errno set.
+    */
+    int ProcessInputCommand(std::string&& command_str);
 
     static void __OverwriteStdout__() noexcept{
         std::cout << "> "s;
@@ -45,24 +53,24 @@ private: // ---------- HELPER METHODS ----------
     /**
      * Method for handling user input on a separate thread.
     */
-    void* InputHandler(void);
+    void InputHandler(void);
     /**
      * Method for handling incoming messages on a separate thread.
     */
-    void* OutputDisplay(void);
+    void OutputDisplay(void);
 
     /**
      * Helper method for establising a InputHandler thread.
     */
-    static void* __InputHaldlerHelper__(void* context){
-        return ((Client*)context)->InputHandler();
-    }
-    /**
-     * Helper method for establishing a OutputHandler's thread.
-    */
-    static void* __OutputDisplayHandlerHelper__(void* context){
-        return ((Client*)context)->OutputDisplay();
-    }
+    // static void* __InputHaldlerHelper__(void* context){
+    //     return ((Client*)context)->InputHandler();
+    // }
+    // /**
+    //  * Helper method for establishing a OutputHandler's thread.
+    // */
+    // static void* __OutputDisplayHandlerHelper__(void* context){
+    //     return ((Client*)context)->OutputDisplay();
+    // }
     /**
      * Main method for establishing connection with the server.
      * @return 0 on success, -1 on error.
@@ -70,22 +78,26 @@ private: // ---------- HELPER METHODS ----------
     int EstablishConnection();
 
     /**
-     * Process a received from the server message.
-     * @param read_buffer a string buffer to read from and write the message to.
+     * Process a message from the server.
+     * @param write_buffer a buffer to read and write the ready-to-display message
      * @return 0 on success, -1 on error with errno set.
     */
-   int ProcessMessage(char* read_buffer);
+   int ProcessMessage(char* write_buffer);
 
 private:
     const std::string remote_host_address_, remote_host_port_;
     int client_socket_;
+
+    bool disconnected = false;
 
 };
 
 Client::Client(const char* hostname, const char* port) : remote_host_address_(hostname), remote_host_port_(port) {}
 
 Client::~Client(){
-    Disconnect();
+    if (!disconnected){
+        Disconnect();
+    }
 }
 
 int Client::Connect(){
@@ -129,19 +141,12 @@ int Client::Connect(){
     }
 
     // Creating two working threads for input and output
-    pthread_t input_reader_thread, output_display_thread;
-    if (pthread_create(&input_reader_thread, NULL, __InputHaldlerHelper__, this) != 0){
-        throw std::runtime_error("Failed to start input thread: pthread_create(): "s + std::string(strerror(errno)));
-    }
-
-    if (pthread_create(&output_display_thread, NULL, __OutputDisplayHandlerHelper__, this) != 0){
-        throw std::runtime_error("Failed to start message-display thread: pthread_create(): "s + std::string(strerror(errno)));
-    }
-
-    while (EXIT_FLAG != 1){
-
-    }
+    std::thread input_reading_worker(&Client::InputHandler, this);
+    std::thread output_display_worker(&Client::OutputDisplay, this);
+    while (EXIT_FLAG == 0) {} // Stay inside this loop until we receive an exit signal
     Disconnect();
+    input_reading_worker.join();
+    output_display_worker.join();
     return 0;
 }
 
@@ -149,58 +154,93 @@ void Client::Disconnect() noexcept{
     std::cerr << MakeColorfulText("[Disconnect] Disconnecting..."s, Color::Pink) << '\n';
     close(client_socket_);
     std::cerr << MakeColorfulText("[Disconnect] Successfully disconnected from the server!"s, Color::Pink) << '\n';
+    disconnected = true;
 }
 
-int Client::ProcessInputCommand(std::string&& command_str, char* write_buffer){
-    std::string command_name(command_str.substr(0, 11));
-    if (command_name == "quit"s){
-        Disconnect();
-    }
-    else if (command_name == "list_users"s){
+int Client::ProcessInputCommand(std::string&& command_str){
+    std::string command_name(command_str.substr(1, command_str.find_first_of(' ')));
+    if (command_name == "list_users"s){
         SendMessage(client_socket_, "\07ACT_LSUSERS"s);
         std::string serv_reply;
         serv_reply.reserve(1068);
 
-        ReceiveMessage(client_socket_, serv_reply.data());
+        int recv_msg_status_code;
+        if ((recv_msg_status_code = ReceiveMessage(client_socket_, serv_reply.data())) == 0){ // Server closed the connection
+            EXIT_FLAG = 1;
+        } else if (recv_msg_status_code == -1){ // En error occurred while receiving the data
+            EXIT_FLAG = 1;
+        }
 
         // parsing a string
         std::string token;
-        size_t pos;
+        size_t pos = 0;
+        while ((pos = serv_reply.find('\02', pos)) != serv_reply.npos){ // The response will arrive in this form: "1) Username (X.X.X.X:YYYY)<\02>2) Username (X.X.X.X:YYYY)
+            token = serv_reply.substr(0, pos);
+            std::cout << token << '\n';
+            serv_reply.erase(0, pos + 1); // +1 for '\02' delimeter
+        }
+        std::cout << serv_reply << '\n';
     }
     else if (command_name == "change_name"s){
-        //
+        
     }
     return 1;
 }
 
-void* Client::InputHandler(void){
+void Client::InputHandler(void){
     char write_buffer[1068]; // 44 bytes for message headers
-    memset(&write_buffer, 0, sizeof(write_buffer));
-    while (true){
+    while (EXIT_FLAG == 0){
+        __OverwriteStdout__();
+        memset(&write_buffer, 0, sizeof(write_buffer));
         fgets(write_buffer, 1024, stdin);
 
         std::string msg_str(write_buffer);
-
-        if (SendMessage(client_socket_, std::string(write_buffer)) == -1){
-            throw std::runtime_error("Failed to send message: send(): "s + std::string(strerror(errno)));
+        StipString(msg_str);
+        
+        if (msg_str.size() > 0){
+            if (msg_str[0] == '/'){
+                if (msg_str == "/quit"){
+                    EXIT_FLAG = 1;
+                    break;
+                }
+                if (ProcessInputCommand(std::move(msg_str)) == -1){
+                    EXIT_FLAG = 1;
+                    throw std::runtime_error("Failed to process input command: "s + std::string(strerror(errno)));
+                }
+            } else{
+                if (SendMessage(client_socket_, std::move(msg_str)) == -1){
+                    if (errno == EBADF || EXIT_FLAG == 1){ // if the socket has been closed and exit code set -> we just leave
+                        break;
+                    }
+                    throw std::runtime_error("Failed to send message to the server: "s + std::string(strerror(errno)));
+                }
+            }
         }
     }
 }
 
-int Client::ProcessMessage(char* read_buffer){
-    return 0;
+int Client::ProcessMessage(char* write_buffer){
+    return 1;
 }
 
-void* Client::OutputDisplay(void){
+void Client::OutputDisplay(void){
     char write_buffer[1068]; // 44 bytes for message headers
-    memset(&write_buffer, 0, sizeof(write_buffer));
 
-    while (true){
-        ReceiveMessage(client_socket_, write_buffer);
-        if (ProcessMessage(write_buffer) == -1){
-            throw std::runtime_error("Failed to process message from the server: "s + std::string(strerror(errno)));
+    while (EXIT_FLAG == 0){
+        memset(&write_buffer, 0, sizeof(write_buffer));
+        int recved_msg_status;
+        if ((recved_msg_status = ReceiveMessage(client_socket_, write_buffer)) == 0){ // Server closed connection
+            EXIT_FLAG = 1;
+        } else if (recved_msg_status == -1){
+            if (errno == EBADF || EXIT_FLAG == 1){ // if the socket has been closed and exit code set -> we just leave
+                break;
+            }
+            EXIT_FLAG = 1;
+            throw std::runtime_error("Failed to receive a message from the server: recv(): "s + std::string(strerror(errno)));
         }
+        
         std::cout << write_buffer << '\n';
+        __OverwriteStdout__();
     }
 }
 
@@ -212,7 +252,6 @@ int Client::EstablishConnection(){
         std::cerr << MakeColorfulText("[Error] EstablishConnection: ReceiveMessage() fail: "s + std::string(strerror(errno)), Color::Red);
         return -1;
     }
-    std::cerr << "Writeable buffer: \"" << writable_buffer << "\"\n";
     std::string key_signal_name(writable_buffer + 1); // +1 to skip the key signal character (\07)
     if (key_signal_name != "NICK_PROMPT"){
         std::cerr << MakeColorfulText("[Error] EstablishConnection(): Received a wrong initial signal: "s + key_signal_name, Color::Red) << '\n';
@@ -224,9 +263,9 @@ int Client::EstablishConnection(){
         std::cout << "Enter your nickname\n"s;
         __OverwriteStdout__();
         std::getline(std::cin, nick_str);
-        if (nick_str.find(' ') != nick_str.npos || nick_str.size() > 20){ // if a space is found or nickname is more than 20 chars
+        if (nick_str.find(' ') != nick_str.npos || nick_str.size() > 20 || *nick_str.begin() == '/'){ // if a space is found or nickname is more than 20 chars or the first char is /
             __OverwriteStdout__();
-            std::cerr << MakeColorfulText("[Error] Entered name contains a space or is more than 20 characters. Try again."s, Color::Red) << '\n';
+            std::cerr << MakeColorfulText("[Error] Entered name contains a space or is more than 20 characters or '/' at the beginning. Try again."s, Color::Red) << '\n';
             continue;
         }
 
@@ -243,18 +282,15 @@ int Client::EstablishConnection(){
             std::cerr << MakeColorfulText("[Error] Failed to receive a message from server: recv(): "s + std::string(strerror(errno)), Color::Red) << std::endl;
             return -1;
         }
-        std::cerr << "Received response from the server ("s << serv_response.size() << "): \""s << serv_response << "\"\n";
 
         std::string server_command(serv_response.substr(1)); // omit the first key signal char
         if (server_command == "NICK_ACCEPT"s){
-            std::cout << "[SERVER] "s << server_command << '\n';
             std::cerr << MakeColorfulText("[Connection] Connected to the server."s, Color::Green) << '\n';
-            return 0;
+            break;
         } else if (server_command == "NICK_STAKEN"s){
-            std::cerr << MakeColorfulText("[NickRefused] Entered nickname is already taken. Enter a new one."s, Color::Red);
-            continue;
+            std::cerr << MakeColorfulText("[NickRefused] Entered nickname is already taken. Enter a new one."s, Color::Red) << '\n';
         } else if (server_command == "NICK_INVALD"s){
-            std::cerr << MakeColorfulText("[NickRefused] Entered nickname contains forbidden characters. Enter a new one.", Color::Red);
+            std::cerr << MakeColorfulText("[NickRefused] Entered nickname contains forbidden characters. Enter a new one.", Color::Red) << '\n';
         }
         else{ // Unknown key signal
             std::cerr << MakeColorfulText("[Error] EstablishConnection(): Received an unknown key signal: \""s + std::string(serv_response), Color::Red) << "\"\n";

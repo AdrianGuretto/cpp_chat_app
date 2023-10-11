@@ -3,6 +3,8 @@
 #include "../../lib/networking_ops.h"
 #include "../../lib/color.h"
 
+#include <execinfo.h>
+
 #include <stdexcept>
 
 #include <iostream>
@@ -115,10 +117,10 @@ private: // --------- connection-handling functions ---------
 
     /**
      * Give response to client's nickname change.
-     * @param client_nickname_change_message a raw message string yielded from recv() funciton
+     * @param nickname a nickname string
      * @return One of NicknameAction flags
     */
-    NicknameAction __ValidateNickname__(const char* client_nickname_change_message) noexcept;
+    NicknameAction __ValidateNickname__(std::string& nickname) noexcept;
 
 
 private:
@@ -129,5 +131,4 @@ private:
     std::unordered_set<std::string> taken_nicknames_;
     std::unordered_map<int, User> sock_to_user_;
     std::vector<pollfd> poll_objects_;
-    
 };

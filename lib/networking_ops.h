@@ -40,6 +40,16 @@ enum class NicknameAction{
 
 static const std::unordered_map<NicknameAction, std::string> nickaction_to_keysig_string = {{NicknameAction::NICK_PROMPT, "\07NICK_PROMPT"s}, {NicknameAction::NICK_ACCEPT, "\07NICK_ACCEPT"s}, {NicknameAction::NICK_STAKEN, "\07NICK_STAKEN"s}, {NicknameAction::NICK_INVALD, "\07NICK_INVALD"s}};
 
+// Remove leading and trailing spaces from a string.
+static void StipString(std::string& str){
+    while (!str.empty() && std::isspace(*str.begin())){
+        str.erase(str.begin());
+    }
+    while(!str.empty() && std::isspace(*str.rbegin())){
+        str.erase(str.length() - 1);
+    }
+}
+
 /**
  * @param socketfd a socket file descriptor to setsockopt()
  * @param socket_option SO_xxxx 
@@ -135,18 +145,16 @@ static int __SendAllBytes__(int receiver_socketfd, const char* msg_buffer, size_
  * @return 0 on success, -1 on error with errno set. 
 */
 static int SendMessage(int receiver_socketfd, std::string&& message){
-    std::cerr << "Sending1: " << message << '\n';
     std::string final_msg(AssembleMessagePacket(std::move(message)));
-    std::cerr << "Sending: " << final_msg << '\n';
+    // std::cerr << "Sending: " << final_msg << '\n';
     if (__SendAllBytes__(receiver_socketfd, final_msg.data(), final_msg.size()) == -1){
         return -1;
     }
     return 0;
 }
 static int SendMessage(int receiver_socketfd, const std::string& message){
-    std::cerr << "Sending1: " << message << '\n';
     std::string final_msg(AssembleMessagePacket(message));
-    std::cerr << "Sending: " << final_msg << '\n';
+    // std::cerr << "Sending: " << final_msg << '\n';
     if (__SendAllBytes__(receiver_socketfd, final_msg.data(), final_msg.size()) == -1){
         return -1;
     }
@@ -173,7 +181,7 @@ static int ReceiveMessage(int sender_socketfd, char* message_buffer){
 
     int msg_len = std::atoi(msg_len_str);
 
-    // memset(message_buffer, 0, sizeof(*message_buffer));
+    memset(message_buffer, 0, sizeof(*message_buffer));
     recv_bytes = recv(sender_socketfd, message_buffer, msg_len, 0);
     if (recv_bytes == -1){
         return -1;
@@ -181,6 +189,6 @@ static int ReceiveMessage(int sender_socketfd, char* message_buffer){
     else if (recv_bytes == 0){
         return 0;
     }
-    std::cerr << "Received: "s << message_buffer << std::endl;
+    // std::cerr << "Received: "s << message_buffer << std::endl;
     return recv_bytes;
 }
