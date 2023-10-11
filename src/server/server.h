@@ -3,6 +3,8 @@
 #include "../../lib/networking_ops.h"
 #include "../../lib/color.h"
 
+#include <execinfo.h>
+
 #include <stdexcept>
 
 #include <iostream>
@@ -14,12 +16,18 @@
 #include <unordered_set>
 #include <list>
 #include <algorithm>
+#include <signal.h>
 
 #include "domain.h"
 
 #define BACKLOG 10 // Max number of pending connections to the server
 #define MESSAGE_MAX_LENGTH 1024;
 #define CONNECTIONS_LIMIT 30;
+
+int EXIT_SIGNAL = 0;
+static void InterruptHandler(int signal_num){
+    EXIT_SIGNAL = 1;
+}
 
 // TO DO: Finish the algorithm for accepting new connections
 // TO DO: Switch from exceptions to return values.
@@ -109,10 +117,10 @@ private: // --------- connection-handling functions ---------
 
     /**
      * Give response to client's nickname change.
-     * @param client_nickname_change_message a raw message string yielded from recv() funciton
+     * @param nickname a nickname string
      * @return One of NicknameAction flags
     */
-    NicknameAction __ValidateNickname__(const char* client_nickname_change_message) noexcept;
+    NicknameAction __ValidateNickname__(std::string& nickname) noexcept;
 
 
 private:
@@ -123,5 +131,4 @@ private:
     std::unordered_set<std::string> taken_nicknames_;
     std::unordered_map<int, User> sock_to_user_;
     std::vector<pollfd> poll_objects_;
-    
 };
